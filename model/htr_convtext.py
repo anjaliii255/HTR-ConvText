@@ -6,9 +6,6 @@ from timm.layers import LayerScale
 import numpy as np
 from model import resnet18
 from functools import partial
-import random
-import re
-import warnings
 
 
 class RelativePositionBias1D(nn.Module):
@@ -269,17 +266,16 @@ class HTR_ConvText(nn.Module):
         self.patch_embed = resnet18.ResNet18(embed_dim)
         self.embed_dim = embed_dim
         self.max_rel_pos = int(max_seq_len)
-        self.mask_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
 
         dpr = [x.item() for x in torch.linspace(0, drop_path, depth)]
         self.blocks = nn.ModuleList([
             ConvTextBlock(embed_dim, num_heads, self.max_rel_pos,
-                               mlp_ratio=mlp_ratio,
-                               ff_dropout=dropout, attn_dropout=dropout,
-                               conv_dropout=dropout, conv_kernel_size=conv_kernel_size,
-                               conv_expansion=1.0,
-                               norm_layer=norm_layer, drop_path=dpr[i],
-                               layerscale_init=1e-5)
+                          mlp_ratio=mlp_ratio,
+                          ff_dropout=dropout, attn_dropout=dropout,
+                          conv_dropout=dropout, conv_kernel_size=conv_kernel_size,
+                          conv_expansion=1.0,
+                          norm_layer=norm_layer, drop_path=dpr[i],
+                          layerscale_init=1e-5)
             for i in range(depth)
         ])
 
@@ -292,7 +288,6 @@ class HTR_ConvText(nn.Module):
         self.initialize_weights()
 
     def initialize_weights(self):
-        torch.nn.init.normal_(self.mask_token, std=.02)
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -304,97 +299,11 @@ class HTR_ConvText(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def mask_random_1d(self, x, ratio):
-        B, L, _ = x.shape
-        mask = torch.ones(B, L, dtype=torch.bool).to(x.device)
-        if ratio <= 0.0 or ratio > 1.0:
-            return mask
-        num = int(round(ratio * L))
-        if num <= 0:
-            return mask
-        noise = torch.rand(B, L).to(x.device)
-        idx = noise.argsort(dim=1)[:, :num]
-        mask.scatter_(1, idx, False)
-        return mask
-
-    def mask_block_1d(self, x, ratio: float, max_block_length: int):
-        B, L, _ = x.shape
-        device = x.device
-
-        if ratio <= 0.0:
-            return torch.ones(B, L, 1, dtype=torch.bool, device=device)
-        if ratio >= 1.0:
-            return torch.zeros(B, L, 1, dtype=torch.bool, device=device)
-
-        target_mask_tokens = int(round(ratio * L))
-        K = target_mask_tokens // max_block_length
-        K = max(K, 1)
-        starts = torch.randint(0, max(1, L - max_block_length + 1), (B, K), device=device)
-        lengths = torch.randint(1, max_block_length + 1, (B, K), device=device)
-        positions = torch.arange(L, device=device).view(1, 1, L)
-        starts_exp = starts.unsqueeze(-1)
-        ends_exp = (starts + lengths).unsqueeze(-1).clamp(max=L)
-        blocks_mask = (positions >= starts_exp) & (positions < ends_exp)
-        masked_any = blocks_mask.any(dim=1)
-        keep_mask = ~masked_any
-        return keep_mask.unsqueeze(-1)
-
-
-    def mask_span_1d(self, x, ratio: float, max_span_length: int):
-        B, L, _ = x.shape
-        device = x.device
-
-        if ratio <= 0.0:
-            return torch.ones(B, L, 1, dtype=torch.bool, device=device)
-        if ratio >= 1.0:
-            return torch.zeros(B, L, 1, dtype=torch.bool, device=device)
-
-        target_mask_tokens = int(round(ratio * L))
-        K = target_mask_tokens // max_span_length
-        K = max(K, 1)
-        starts = torch.randint(0, max(1, L - max_span_length + 1), (B, K), device=device)
-        lengths = torch.full((B, K), max_span_length, device=device)
-        positions = torch.arange(L, device=device).view(1, 1, L)
-        starts_exp = starts.unsqueeze(-1)
-        ends_exp = (starts + lengths).unsqueeze(-1).clamp(max=L)
-        spans_mask = (positions >= starts_exp) & (positions < ends_exp)
-        masked_any = spans_mask.any(dim=1)
-        keep_mask = ~masked_any
-        return keep_mask.unsqueeze(-1)
-
-
-    def forward_features(self, x, use_masking=False,
-                         mask_mode="span",
-                         mask_ratio=0.5, block_span=4, max_span_length=8):
+    def forward_features(self, x):
         x = self.patch_embed(x)
         B, C, W, H = x.shape
         assert C == self.embed_dim, f"Expected embed_dim {self.embed_dim}, got {C}"
         x = x.view(B, C, -1).permute(0, 2, 1)
-
-        masked_positions_1d = None
-        if use_masking:
-            if mask_mode == "random":
-                keep_mask_1d = self.mask_random_1d(x, mask_ratio).float()
-                mask = keep_mask_1d.unsqueeze(-1)
-            elif mask_mode in ("block"):
-                keep_mask = self.mask_block_1d(x, mask_ratio, block_span).float()
-                keep_mask_1d = keep_mask.squeeze(-1)
-                mask = keep_mask
-            elif mask_mode in ("span"):
-                keep_mask = self.mask_span_1d(
-                    x, mask_ratio, max_span_length).float()
-                keep_mask_1d = keep_mask.squeeze(-1)
-                mask = keep_mask
-            else:
-                warnings.warn(
-                    f"Unknown mask_mode '{mask_mode}', defaulting to span.")
-                keep_mask = self.mask_span_1d(
-                    x, mask_ratio, max_span_length).float()
-                keep_mask_1d = keep_mask.squeeze(-1)
-                mask = keep_mask
-            masked_positions_1d = (1.0 - keep_mask_1d).clamp(min=0.0, max=1.0)
-            x = mask * x + (1.0 - mask) * \
-                self.mask_token.expand(x.size(0), x.size(1), x.size(2))
         skip_hi = None
         for i, blk in enumerate(self.blocks, 1):
             x = blk(x)
@@ -409,19 +318,13 @@ class HTR_ConvText(nn.Module):
                 x = x + skip_hi
 
         x = self.norm(x)
-        return x, masked_positions_1d
+        return x
 
-    def forward(self, x, use_masking=False, return_features=False, return_mask=False,
-                mask_mode="span", mask_ratio=None, block_span=None, max_span_length=None):
-        feats, masked_positions_1d = self.forward_features(
-            x, use_masking=use_masking, mask_mode=mask_mode, mask_ratio=mask_ratio, block_span=block_span, max_span_length=max_span_length)
+    def forward(self, x, return_features=False, **_unused_kwargs):
+        feats = self.forward_features(x)
         logits = self.head(feats)
-        if return_features and return_mask:
-            return logits, feats, (masked_positions_1d if masked_positions_1d is not None else None)
         if return_features:
             return logits, feats
-        if return_mask:
-            return logits, (masked_positions_1d if masked_positions_1d is not None else None)
         return logits
 
 

@@ -14,7 +14,6 @@ from model import htr_convtext
 from functools import partial
 import random
 import numpy as np
-import re
 import importlib
 from model.tcm_head import TCMHead, build_tcm_vocab, make_context_batch
 import wandb
@@ -33,28 +32,15 @@ def compute_losses(
     ctc_lambda,
     tcm_lambda,
     stoi,
-    mask_mode='span',
-    mask_ratio=0.30,
-    block_span=4,
-    max_span_length=8,
     pre_tcm_ctx=None,
-    use_masking=True,
 ):
     if tcm_head is None or nb_iter < args.tcm_warmup_iters:
-        preds = model(image, use_masking=use_masking, mask_mode=mask_mode,
-                      mask_ratio=mask_ratio, max_span_length=max_span_length)
+        preds = model(image)
         feats = None
+        vis_mask = None
     else:
-        preds, feats, vis_mask = model(
-            image,
-            use_masking=use_masking,
-            return_features=True,
-            return_mask=True,
-            mask_mode=mask_mode,
-            mask_ratio=mask_ratio,
-            block_span=block_span,
-            max_span_length=max_span_length
-        )
+        preds, feats = model(image, return_features=True)
+        vis_mask = None
     text_ctc, length_ctc = converter.encode(texts)
     text_ctc = text_ctc.to(preds.device)
     length_ctc = length_ctc.to(preds.device)
@@ -89,33 +75,6 @@ def compute_losses(
 
     total = ctc_lambda * loss_ctc + tcm_lambda * loss_tcm
     return total, loss_ctc.detach(), loss_tcm.detach()
-
-
-def tri_masked_loss(args, model, tcm_head, image, labels, batch_size,
-                    criterion, converter, nb_iter, ctc_lambda, tcm_lambda, stoi,
-                    r_rand=0.6, r_block=0.6, block_span=4, r_span=0.4, max_span=8):
-    total = 0.0
-    total_ctc = 0.0
-    total_tcm = 0.0
-    plans = [("random", r_rand), ("block", r_block), ("span", r_span)]
-
-    if tcm_head is not None and nb_iter >= args.tcm_warmup_iters:
-        pre_tcm_ctx = make_context_batch(
-            labels, stoi, sub_str_len=args.tcm_sub_len, device=image.device)
-
-    for mode, ratio in plans:
-        loss, loss_ctc, loss_tcm = compute_losses(
-            args, model, tcm_head, image, labels, batch_size, criterion, converter,
-            nb_iter, ctc_lambda, tcm_lambda, stoi,
-            mask_mode=mode, mask_ratio=ratio, block_span=block_span, max_span_length=max_span,
-            pre_tcm_ctx=pre_tcm_ctx
-        )
-        total += loss
-        total_ctc += loss_ctc
-        total_tcm += loss_tcm
-
-    denom = 3.0
-    return total/denom, total_ctc/denom, total_tcm/denom
 
 
 def main():
@@ -259,28 +218,11 @@ def main():
             batch = next(train_iter)
             cached_batches.append(batch)
             image = batch[0].cuda(non_blocking=True)
-            text, length = converter.encode(batch[1])
             batch_size = image.size(0)
-            if args.use_masking:
-                # loss, loss_ctc, loss_tcm = tri_masked_loss(
-                #     args, model, tcm_head, image, batch[1], batch_size, criterion, converter,
-                #     nb_iter, args.ctc_lambda, args.tcm_lambda, stoi,
-                #     r_rand=args.r_rand,
-                #     r_block=args.r_block,
-                #     block_span=args.block_span,
-                #     r_span=args.r_span,
-                #     max_span=args.max_span
-                # )
-                loss, loss_ctc, loss_tcm = compute_losses(
-                    args, model, tcm_head, image, batch[1], batch_size, criterion, converter,
-                    nb_iter, args.ctc_lambda, args.tcm_lambda, stoi,
-                    mask_mode='span', mask_ratio=0.4, max_span_length=8, use_masking=True
-                )
-            else:
-                loss, loss_ctc, loss_tcm = compute_losses(
-                    args, model, tcm_head, image, batch[1], batch_size, criterion, converter,
-                    nb_iter, args.ctc_lambda, args.tcm_lambda, stoi, use_masking=False
-                )
+            loss, loss_ctc, loss_tcm = compute_losses(
+                args, model, tcm_head, image, batch[1], batch_size, criterion, converter,
+                nb_iter, args.ctc_lambda, args.tcm_lambda, stoi
+            )
             (loss / accum_steps).backward()
             total_loss_this_macro += loss.item()
             avg_loss_ctc += loss_ctc.mean().item()
@@ -292,28 +234,11 @@ def main():
         for micro_step in range(accum_steps):
             batch = cached_batches[micro_step]
             image = batch[0].cuda(non_blocking=True)
-            text, length = converter.encode(batch[1])
             batch_size = image.size(0)
-            if args.use_masking:
-                # loss2, loss_ctc, loss_tcm = tri_masked_loss(
-                #     args, model, tcm_head, image, batch[1], batch_size, criterion, converter,
-                #     nb_iter, args.ctc_lambda, args.tcm_lambda, stoi,
-                #     r_rand=args.r_rand,
-                #     r_block=args.r_block,
-                #     block_span=args.block_span,
-                #     r_span=args.r_span,
-                #     max_span=args.max_span
-                # )
-                loss2, loss_ctc, loss_tcm = compute_losses(
-                    args, model, tcm_head, image, batch[1], batch_size, criterion, converter,
-                    nb_iter, args.ctc_lambda, args.tcm_lambda, stoi,
-                    mask_mode='span', mask_ratio=0.4, max_span_length=8, use_masking=True
-                )
-            else:
-                loss2, loss_ctc, loss_tcm = compute_losses(
-                    args, model, tcm_head, image, batch[1], batch_size, criterion, converter,
-                    nb_iter, args.ctc_lambda, args.tcm_lambda, stoi, use_masking=False
-                )
+            loss2, loss_ctc, loss_tcm = compute_losses(
+                args, model, tcm_head, image, batch[1], batch_size, criterion, converter,
+                nb_iter, args.ctc_lambda, args.tcm_lambda, stoi
+            )
             (loss2 / accum_steps).backward()
         optimizer.second_step(zero_grad=True)
         model.zero_grad()
