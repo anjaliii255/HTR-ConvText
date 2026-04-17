@@ -1,55 +1,45 @@
-# HTR-ConvText iMac Runbook
-Follow these instructions precisely to set up and train the HTR-ConvText model natively on your Apple Silicon iMac.
+# iMac Deployment & Training Runbook
 
-## Step 1: Transfer Files
-1. Copy the `HTR-ConvText` folder (which we just packaged) to your iMac.
-2. Move your downloaded `IAM_lines.zip` and `read2016_lines.zip` files next to the `HTR-ConvText` folder.
+This runbook outlines the exact end-to-end steps required to pull the HTR-ConvText codebase onto your institutional iMac, prepare the datasets locally without syncing gigabytes of data over Git, and effortlessly initialize PyTorch training fully leveraging Apple Silicon (MPS Metal GPU natively). 
 
-## Step 2: Environment Setup
-Open the Terminal app on your iMac and navigate to the directory:
+---
+
+### Step 1: Clone the Repository & Environment Setup
+Log into your iMac terminal and pull the synced codebase. We use Python's built-in `venv` to avoid bloated Conda path issues on campus machines.
+
 ```bash
-cd path/to/HTR-ConvText
-```
+# Clone the synced codebase
+git clone https://github.com/anjaliii255/HTR-ConvText.git
+cd HTR-ConvText
 
-Since Conda is not installed, we will use Python's built-in `venv` to create an isolated environment optimized for your Apple Native GPU (MPS/Metal):
-```bash
-# Create a virtual environment named "htr-env"
+# Prepare an isolated Python environment
 python3 -m venv htr-env
-
-# Activate the virtual environment
 source htr-env/bin/activate
 
-# Install PyTorch optimized for macOS
-pip3 install torch torchvision torchaudio
-
-# Install remaining libraries
+# Install requirements (make sure to use 'pip3' if 'pip' gives errors)
 pip install -r requirements.txt
 ```
 
-## Step 3: Dataset Preparation
-Run the automated tool I built for you to bypass the bugs in the official repository splits. It will handle unzipping, validating image-text pairs, and 80-10-10 dataset splitting automatically.
+### Step 2: Extract & Structure Datasets Automatically
+Download `IAM_lines.zip` and `read2016_lines.zip` manually from your Google Drive into the iMac's `~/Downloads` folder. 
+
+Run the automated data processing script. This single script handles the decompression, validation of text pairs, and 80-10-10 file splitting (`train.ln`, `val.ln`, `test.ln`):
 
 ```bash
-# Point the paths exactly to where your ZIP files are located
-python setup_data.py --iam_zip ../IAM_lines.zip --read_zip ../read2016_lines.zip
+python setup_data.py --iam_zip ~/Downloads/IAM_lines.zip --read_zip ~/Downloads/read2016_lines.zip
 ```
 
-> [!NOTE] 
-> This might take a minute depending on the iMac's disk speed. It will automatically populate `data/iam` and `data/read2016` completely flawlessly for training.
+### Step 3: Train the Models on MPS
+PyTorch natively hooks into the M-series GPU for 99% of its deep learning graphs (`Using device: mps`). The `ctc_loss` function is explicitly handled in our `train.py` locally via CPU fallback, so you **do not** need to mess with any environment wrappers.
 
-## Step 4: Start Training
+*(Note: The batch sizes `train-bs` and `val-bs` have been lowered to 32 and 8 since the Mac Unified Memory might hit bottlenecks compared to a server GPU. Feel free to increase them to 64 and 16 if your iMac has 64GB+ of unified memory.)*
 
-To train the model on the IAM dataset natively using your iMac's Metal GPU (MPS), use the following command:
-
+**Train on the IAM Dataset:**
 ```bash
 python train.py --dataset iam --tcm-enable --exp-name "imac-training-iam" --img-size 512 64 --train-bs 32 --val-bs 8 --data-path data/iam/lines/ --train-data-list data/iam/train.ln --val-data-list data/iam/val.ln --test-data-list data/iam/test.ln --nb-cls 80
 ```
-*(Notice the batch sizes `train-bs` and `val-bs` have been lowered to 32 and 8 since the Mac Unified Memory might hit bottlenecks compared to a gigantic Nvidia H100 GPU! Feel free to increase them to 64 and 16 if your iMac has 64GB+ of unified memory.)*
 
-To train on READ2016, swap the dataset arguments:
+**Train on the READ2016 Dataset:**
 ```bash
 python train.py --dataset read2016 --tcm-enable --exp-name "imac-training-read2016" --img-size 512 64 --train-bs 32 --val-bs 8 --data-path data/read2016/lines/ --train-data-list data/read2016/train.ln --val-data-list data/read2016/val.ln --test-data-list data/read2016/test.ln --nb-cls 90
 ```
-
-> [!TIP]
-> You will see `Using device: mps` in your terminal logs. This proves the system is officially hardware-accelerated for Apple Silicon!
