@@ -227,6 +227,9 @@ def main():
                 nb_iter, args.ctc_lambda, args.tcm_lambda, stoi
             )
             (loss / accum_steps).backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+            if tcm_head is not None:
+                torch.nn.utils.clip_grad_norm_(tcm_head.parameters(), 5.0)
             total_loss_this_macro += loss.item()
             avg_loss_ctc += loss_ctc.mean().item()
             avg_loss_tcm += loss_tcm.mean().item()
@@ -243,6 +246,9 @@ def main():
                 nb_iter, args.ctc_lambda, args.tcm_lambda, stoi
             )
             (loss2 / accum_steps).backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+            if tcm_head is not None:
+                torch.nn.utils.clip_grad_norm_(tcm_head.parameters(), 5.0)
         optimizer.second_step(zero_grad=True)
         model.zero_grad()
         model_ema.update(model, num_updates=nb_iter / 2)

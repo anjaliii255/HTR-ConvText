@@ -32,14 +32,14 @@ python setup_data.py --iam_zip ~/Downloads/IAM_lines.zip --read_zip ~/Downloads/
 ### Step 3: Train the Models on MPS
 PyTorch natively hooks into the M-series GPU for 99% of its deep learning graphs (`Using device: mps`). The `ctc_loss` function is explicitly handled in our `train.py` locally via CPU fallback, so you **do not** need to mess with any environment wrappers.
 
-*(Note: The batch sizes `train-bs` and `val-bs` have been lowered to 32 and 8 since the Mac Unified Memory might hit bottlenecks compared to a server GPU. Feel free to increase them to 64 and 16 if your iMac has 64GB+ of unified memory.)*
+*(Note: The batch sizes `train-bs` and `val-bs` have been strictly lowered to 8 and 4 to maintain numerical gradient stability on the M-series GPU during early training steps!)*
 
 **Train on the IAM Dataset:**
 ```bash
-python train.py --dataset iam --tcm-enable --exp-name "imac-training-iam" --img-size 512 64 --train-bs 32 --val-bs 8 --data-path data/iam/lines/ --train-data-list data/iam/train.ln --val-data-list data/iam/val.ln --test-data-list data/iam/test.ln --nb-cls 80
+python train.py --dataset iam --tcm-enable --exp-name "imac-training-iam" --img-size 512 64 --train-bs 8 --val-bs 4 --data-path data/iam/lines/ --train-data-list data/iam/train.ln --val-data-list data/iam/val.ln --test-data-list data/iam/test.ln --nb-cls 80
 ```
 
 **Train on the READ2016 Dataset:**
 ```bash
-python train.py --dataset read2016 --tcm-enable --exp-name "imac-training-read2016" --img-size 512 64 --train-bs 32 --val-bs 8 --data-path data/read2016/lines/ --train-data-list data/read2016/train.ln --val-data-list data/read2016/val.ln --test-data-list data/read2016/test.ln --nb-cls 90
+python train.py --dataset read2016 --tcm-enable --exp-name "imac-training-read2016" --img-size 512 64 --train-bs 8 --val-bs 4 --data-path data/read2016/lines/ --train-data-list data/read2016/train.ln --val-data-list data/read2016/val.ln --test-data-list data/read2016/test.ln --nb-cls 90
 ```

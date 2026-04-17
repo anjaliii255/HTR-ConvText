@@ -51,6 +51,7 @@ class Attention(nn.Module):
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn + self.rel_pos_bias(N)
+        attn = attn - attn.detach().amax(dim=-1, keepdim=True)  # MPS stability clamp
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
 
