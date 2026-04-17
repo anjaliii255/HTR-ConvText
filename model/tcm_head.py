@@ -20,7 +20,7 @@ def texts_to_ids(texts, stoi):
     return [torch.tensor([stoi[ch] for ch in t], dtype=torch.long) for t in texts]
 
 
-def make_context_batch(texts, stoi, sub_str_len=5, device='cuda'):
+def make_context_batch(texts, stoi, sub_str_len=5, device='cpu'):
     ids = [torch.tensor([stoi[ch] for ch in t], dtype=torch.long, device=device) for t in texts]
     B = len(ids); Lmax = max(t.size(0) for t in ids); S = sub_str_len
     PAD = stoi["<pad>"]

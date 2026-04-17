@@ -24,7 +24,8 @@ def validation(model, criterion, evaluation_loader, converter):
 
     for i, (image_tensors, labels) in enumerate(evaluation_loader):
         batch_size = image_tensors.size(0)
-        image = image_tensors.cuda()
+        device = next(model.parameters()).device
+        image = image_tensors.to(device)
 
         text_for_loss, length_for_loss = converter.encode(labels)
 
@@ -34,7 +35,8 @@ def validation(model, criterion, evaluation_loader, converter):
         preds = preds.permute(1, 0, 2).log_softmax(2)
 
         torch.backends.cudnn.enabled = False
-        cost = criterion(preds, text_for_loss, preds_size, length_for_loss).mean()
+        # MPS fix: CTCLoss not on MPS — use CPU tensors, criterion already on CPU
+        cost = criterion(preds.cpu(), text_for_loss.cpu(), preds_size.cpu(), length_for_loss.cpu()).mean().to(device)
         torch.backends.cudnn.enabled = True
 
         _, preds_index = preds.max(2)

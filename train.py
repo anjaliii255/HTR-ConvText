@@ -42,12 +42,13 @@ def compute_losses(
         preds, feats = model(image, return_features=True)
         vis_mask = None
     text_ctc, length_ctc = converter.encode(texts)
-    text_ctc = text_ctc.to(preds.device)
-    length_ctc = length_ctc.to(preds.device)
-    preds_sz = torch.full((batch_size,), preds.size(
-        1), dtype=torch.int32, device=preds.device)
-    loss_ctc = criterion_ctc(preds.permute(1, 0, 2).log_softmax(2),
-                             text_ctc, preds_sz, length_ctc).mean()
+    # encode() returns CPU tensors; preds_sz also on CPU for CTC
+    preds_sz = torch.full((batch_size,), preds.size(1), dtype=torch.int32)
+    # MPS fix: CTCLoss not on MPS — all inputs on CPU, result moved back to MPS
+    loss_ctc = criterion_ctc(
+        preds.permute(1, 0, 2).log_softmax(2).cpu(),
+        text_ctc, preds_sz, length_ctc
+    ).mean().to(preds.device)
 
     loss_tcm = torch.zeros((), device=preds.device)
     if tcm_head is not None and feats is not None:
@@ -103,6 +104,8 @@ def main():
         wandb = None
 
     torch.backends.cudnn.benchmark = True
+    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    logger.info(f"Using device: {device}")
 
     model = htr_convtext.create_model(
         nb_cls=args.nb_cls, img_size=args.img_size[::-1])
@@ -111,7 +114,7 @@ def main():
     logger.info('total_param is {}'.format(total_param))
 
     model.train()
-    model = model.cuda()
+    model = model.to(device)
     ema_decay = args.ema_decay
     logger.info(f"Using EMA decay: {ema_decay}")
     model_ema = utils.ModelEma(model, ema_decay)
@@ -127,7 +130,7 @@ def main():
     train_loader = torch.utils.data.DataLoader(train_dataset,
                                                batch_size=args.train_bs,
                                                shuffle=True,
-                                               pin_memory=True,
+                                               pin_memory=(device.type == 'cuda'),  # MPS fix: pin_memory not supported on MPS
                                                num_workers=args.num_workers,
                                                collate_fn=partial(dataset.SameTrCollate, args=args))
     train_iter = dataset.cycle_data(train_loader)
@@ -138,10 +141,10 @@ def main():
     val_loader = torch.utils.data.DataLoader(val_dataset,
                                              batch_size=args.val_bs,
                                              shuffle=False,
-                                             pin_memory=True,
+                                             pin_memory=(device.type == 'cuda'),  # MPS fix
                                              num_workers=args.num_workers)
 
-    criterion = torch.nn.CTCLoss(reduction='none', zero_infinity=True)
+    criterion = torch.nn.CTCLoss(reduction='none', zero_infinity=True).to('cpu')  # MPS fix: CTC not implemented on MPS
     converter = utils.CTCLabelConverter(train_dataset.ralph.values())
 
     stoi, itos, pad_id = build_tcm_vocab(converter)
@@ -150,7 +153,7 @@ def main():
 
     if args.tcm_enable:
         tcm_head = TCMHead(d_vis=d_vis, vocab_size_tcm=vocab_size_tcm, pad_id=pad_id,
-                           sub_str_len=args.tcm_sub_len).cuda()
+                           sub_str_len=args.tcm_sub_len).to(device)
         tcm_head.train()
     else:
         tcm_head = None
@@ -217,7 +220,7 @@ def main():
         for micro_step in range(accum_steps):
             batch = next(train_iter)
             cached_batches.append(batch)
-            image = batch[0].cuda(non_blocking=True)
+            image = batch[0].to(device, non_blocking=True)
             batch_size = image.size(0)
             loss, loss_ctc, loss_tcm = compute_losses(
                 args, model, tcm_head, image, batch[1], batch_size, criterion, converter,
@@ -233,7 +236,7 @@ def main():
         # Recompute with perturbed weights and accumulate again for the second step
         for micro_step in range(accum_steps):
             batch = cached_batches[micro_step]
-            image = batch[0].cuda(non_blocking=True)
+            image = batch[0].to(device, non_blocking=True)
             batch_size = image.size(0)
             loss2, loss_ctc, loss_tcm = compute_losses(
                 args, model, tcm_head, image, batch[1], batch_size, criterion, converter,

@@ -1,1 +1,20 @@
-__pycache__
+# Datasets and outputs
+data/
+output/
+__pycache__/
+*.zip
+*.pth
+*.pt
+
+# Virtual environments
+htr-env/
+venv/
+env/
+.env
+
+# MacOS artifacts
+.DS_Store
+
+# IDEs
+.idea/
+.vscode/

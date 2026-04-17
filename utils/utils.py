@@ -11,7 +11,7 @@ from copy import deepcopy
 from collections import OrderedDict
 import random
 import numpy as np
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')  # MPS fix
 
 
 def randint(low, high):
@@ -67,7 +67,7 @@ class CTCLabelConverter(object):
         text = ''.join(text)
         text = [self.dict[char] for char in text]
 
-        return (torch.IntTensor(text).to(device), torch.IntTensor(length).to(device))
+        return (torch.IntTensor(text), torch.IntTensor(length))  # MPS fix: keep on CPU; CTC loss runs on CPU
 
     def decode(self, text_index, length):
         texts = []

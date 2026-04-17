@@ -13,7 +13,7 @@ from collections import OrderedDict
 
 def main():
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     torch.manual_seed(args.seed)
 
     args.save_dir = os.path.join(args.out_dir, args.exp_name)
@@ -37,7 +37,7 @@ def main():
             model_dict[k] = v
 
     model.load_state_dict(model_dict, strict=True)
-    model = model.cuda()
+    model = model.to(device)
 
     logger.info('Loading test loader...')
     test_dataset = dataset.myLoadDS(
@@ -45,12 +45,12 @@ def main():
     test_loader = torch.utils.data.DataLoader(test_dataset,
                                               batch_size=args.val_bs,
                                               shuffle=False,
-                                              pin_memory=True,
+                                              pin_memory=(device.type == 'cuda'),
                                               num_workers=args.num_workers)
 
     converter = utils.CTCLabelConverter(test_dataset.ralph.values())
     criterion = torch.nn.CTCLoss(
-        reduction='none', zero_infinity=True).to(device)
+        reduction='none', zero_infinity=True).to('cpu')  # MPS fix
 
     model.eval()
     with torch.no_grad():

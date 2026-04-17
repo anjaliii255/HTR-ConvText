@@ -68,7 +68,7 @@ class myLoadDS(Dataset):
             elif dataset == 'read2016':
                 self.ralph = {
                     idx: char for idx, char in enumerate(
-                        ' ()+,-./0123456789:<>ABCDEFGHIJKLMNOPQRSTUVWYZ[]abcdefghijklmnopqrstuvwxyz¾Ößäöüÿāēōūȳ̄̈—'
+                        ' ()+,-./0123456789:<>ABCDEFGHIJKLMNOPQRSTUVWYZ[]abcdefghijklmnopqrstuvwxyz¾Ößäöüÿāēōūȳ̄̈—¬'
                     )
                 }
             elif dataset == 'vnondb':
